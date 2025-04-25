@@ -1,0 +1,14 @@
+{
+    "name": "whitelist-contracts",
+    "version": "1.0.0",
+    "description": "Whitelist project contracts",
+    "scripts": {
+        "prepare-abi": "forge build && mkdir -p abi && forge inspect src/DepositThresholdNFT.sol:DepositThresholdNFT abi --json > abi/DepositThresholdNFT.json",
+        "typechain": "typechain --target ethers-v6 --out-dir typechain-types './abi/*.json'"
+    },
+    "devDependencies": {
+        "typechain": "^8.3.1",
+        "@typechain/ethers-v6": "^0.5.1",
+        "ethers": "^6.9.0"
+    }
+}

@@ -1,0 +1,24 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+test = "test"
+cache = true
+cache_path = "cache"
+solc_version = "0.8.20" # Match the Solidity version in your contract
+optimizer = true
+optimizer_runs = 200
+extra_output = ['abi']
+
+[profile.default.fuzz]
+runs = 256
+
+[profile.default.invariant]
+runs = 256
+depth = 15
+
+[rpc_endpoints]
+base_sepolia = "https://sepolia.base.org" # Add Base Sepolia for testing
+base_mainnet = "https://mainnet.base.org" # Add Base Mainnet for deployment
+ronin_mainnet = "https://api.roninchain.com/rpc"
+ronin_testnet = "https://saigon-testnet.roninchain.com/rpc" # Add Ronin Testnet for testing
