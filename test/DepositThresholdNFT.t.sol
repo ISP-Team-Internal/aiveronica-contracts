@@ -105,6 +105,88 @@ contract DepositThresholdNFTTest is Test {
         assertEq(token.balanceOf(admin), requiredAmount1);
     }
 
+    function testAdminWithdrawAll() public {
+        // User1 mints NFT
+        warpToDay(0);
+        uint256 requiredAmount1 = depositNFT.getRequiredDepositAmount(0);
+        vm.startPrank(user1);
+        token.approve(address(depositNFT), requiredAmount1);
+        depositNFT.mint();
+        vm.stopPrank();
+
+        // Warp to after campaign end
+        vm.warp(STARTING_TIMESTAMP + CAMPAIGN_DURATION + 1);
+
+        // Admin withdraws all tokens
+        vm.prank(admin);
+        depositNFT.adminWithdrawAll();
+
+        assertEq(token.balanceOf(admin), requiredAmount1);
+        assertEq(token.balanceOf(address(depositNFT)), 0);
+    }
+
+    function testAdminWithdrawAllMultipleDeposits() public {
+        // User1 mints NFT
+        warpToDay(0);
+        uint256 requiredAmount1 = depositNFT.getRequiredDepositAmount(0);
+        vm.startPrank(user1);
+        token.approve(address(depositNFT), requiredAmount1);
+        depositNFT.mint();
+        vm.stopPrank();
+
+        // User2 mints NFT
+        warpToDay(1);
+        uint256 requiredAmount2 = depositNFT.getRequiredDepositAmount(1);
+        vm.startPrank(user2);
+        token.approve(address(depositNFT), requiredAmount2);
+        depositNFT.mint();
+        vm.stopPrank();
+
+        // Warp to after campaign end
+        vm.warp(STARTING_TIMESTAMP + CAMPAIGN_DURATION + 1);
+
+        // Admin withdraws all tokens
+        vm.prank(admin);
+        depositNFT.adminWithdrawAll();
+
+        assertEq(token.balanceOf(admin), requiredAmount1 + requiredAmount2);
+        assertEq(token.balanceOf(address(depositNFT)), 0);
+    }
+
+    function testNonAdminCannotWithdrawAll() public {
+        // User1 mints NFT
+        warpToDay(0);
+        uint256 requiredAmount1 = depositNFT.getRequiredDepositAmount(0);
+        vm.startPrank(user1);
+        token.approve(address(depositNFT), requiredAmount1);
+        depositNFT.mint();
+        vm.stopPrank();
+
+        // Warp to after campaign end
+        vm.warp(STARTING_TIMESTAMP + CAMPAIGN_DURATION + 1);
+
+        // Try to withdraw all tokens as non-admin
+        vm.startPrank(user1);
+        vm.expectRevert(
+            abi.encodeWithSignature(
+                "OwnableUnauthorizedAccount(address)",
+                user1
+            )
+        );
+        depositNFT.adminWithdrawAll();
+        vm.stopPrank();
+    }
+
+    function testCannotAdminWithdrawAllZeroBalance() public {
+        // Warp to after campaign end
+        vm.warp(STARTING_TIMESTAMP + CAMPAIGN_DURATION + 1);
+
+        // Try to withdraw all tokens when contract has zero balance
+        vm.prank(admin);
+        vm.expectRevert("No tokens to withdraw");
+        depositNFT.adminWithdrawAll();
+    }
+
     // --- User Function Tests ---
 
     function testMintBeforeStart() public {

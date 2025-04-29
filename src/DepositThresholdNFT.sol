@@ -124,7 +124,7 @@ contract DepositThresholdNFT is ERC721, Ownable, ReentrancyGuard, Pausable {
     function adminWithdraw(
         uint256 _amount,
         address _to
-    ) external nonReentrant onlyOwner whenNotPaused {
+    ) external nonReentrant onlyOwner {
         require(_to != address(0), "Invalid recipient address");
         require(_amount > 0, "Amount must be greater than 0");
         require(
@@ -133,6 +133,16 @@ contract DepositThresholdNFT is ERC721, Ownable, ReentrancyGuard, Pausable {
         );
         token.safeTransfer(_to, _amount);
         emit AdminWithdrawal(_amount, _to);
+    }
+
+    /**
+     * @dev Allows the owner to withdraw all campaign tokens to their own address
+     */
+    function adminWithdrawAll() external nonReentrant onlyOwner {
+        uint256 balance = token.balanceOf(address(this));
+        require(balance > 0, "No tokens to withdraw");
+        token.safeTransfer(owner(), balance);
+        emit AdminWithdrawal(balance, owner());
     }
 
     /**
