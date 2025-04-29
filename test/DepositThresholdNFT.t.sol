@@ -16,6 +16,7 @@ contract DepositThresholdNFTTest is Test {
     uint256 constant CAMPAIGN_DURATION = 14 days;
     uint256[] dailyTokenAmounts;
     uint256[] dailyWhitelistLimits;
+    string constant BASE_URI = "https://example.com/metadata/";
 
     function setUp() public {
         // Reset state
@@ -61,7 +62,8 @@ contract DepositThresholdNFTTest is Test {
             dailyTokenAmounts,
             dailyWhitelistLimits,
             CAMPAIGN_DURATION,
-            admin
+            admin,
+            BASE_URI
         );
 
         // Mint tokens to users
@@ -693,5 +695,57 @@ contract DepositThresholdNFTTest is Test {
         // Both users have purchased
         assertEq(depositNFT.hasPurchased(user1), true);
         assertEq(depositNFT.hasPurchased(user2), true);
+    }
+
+    function testTokenURI() public {
+        // Mint an NFT
+        warpToDay(0);
+        uint256 requiredAmount = depositNFT.getRequiredDepositAmount(0);
+        vm.startPrank(user1);
+        token.approve(address(depositNFT), requiredAmount);
+        depositNFT.mint();
+        vm.stopPrank();
+
+        // Check token URI
+        string memory expectedURI = string(abi.encodePacked(BASE_URI, "1"));
+        assertEq(depositNFT.tokenURI(1), expectedURI);
+    }
+
+    function testCannotGetTokenURIForNonExistentToken() public {
+        vm.expectRevert(
+            abi.encodeWithSignature("ERC721NonexistentToken(uint256)", 1)
+        );
+        depositNFT.tokenURI(1);
+    }
+
+    function testAdminCanUpdateBaseURI() public {
+        string memory newBaseURI = "https://newexample.com/metadata/";
+        vm.prank(admin);
+        depositNFT.setBaseURI(newBaseURI);
+
+        // Mint an NFT
+        warpToDay(0);
+        uint256 requiredAmount = depositNFT.getRequiredDepositAmount(0);
+        vm.startPrank(user1);
+        token.approve(address(depositNFT), requiredAmount);
+        depositNFT.mint();
+        vm.stopPrank();
+
+        // Check token URI with new base URI
+        string memory expectedURI = string(abi.encodePacked(newBaseURI, "1"));
+        assertEq(depositNFT.tokenURI(1), expectedURI);
+    }
+
+    function testNonAdminCannotUpdateBaseURI() public {
+        string memory newBaseURI = "https://newexample.com/metadata/";
+        vm.startPrank(user1);
+        vm.expectRevert(
+            abi.encodeWithSignature(
+                "OwnableUnauthorizedAccount(address)",
+                user1
+            )
+        );
+        depositNFT.setBaseURI(newBaseURI);
+        vm.stopPrank();
     }
 }

@@ -6,6 +6,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
+import "@openzeppelin/contracts/utils/Strings.sol";
 
 /**
  * @title DepositThresholdNFT
@@ -26,6 +27,8 @@ contract DepositThresholdNFT is ERC721, Ownable, ReentrancyGuard, Pausable {
     mapping(uint256 => uint256) public dailyWhitelistCount; // Tracks whitelist count per day
     mapping(address => uint256) public lastPurchaseDay; // Tracks the last day a user made a purchase
     mapping(address => bool) public hasPurchased; // Tracks whether a user has ever purchased
+
+    string private _baseTokenURI; // Base URI for token metadata
 
     event MintedNFT(
         address indexed user,
@@ -54,7 +57,8 @@ contract DepositThresholdNFT is ERC721, Ownable, ReentrancyGuard, Pausable {
         uint256[] memory _dailyTokenAmounts,
         uint256[] memory _dailyWhitelistLimits,
         uint256 _campaignDuration,
-        address _initialOwner
+        address _initialOwner,
+        string memory baseTokenURI
     ) ERC721("DepositThresholdNFT", "DTNFT") Ownable(_initialOwner) {
         require(
             _startingTimestamp > block.timestamp,
@@ -94,6 +98,7 @@ contract DepositThresholdNFT is ERC721, Ownable, ReentrancyGuard, Pausable {
         token = IERC20(_tokenAddress);
         campaignDuration = _campaignDuration;
         _tokenIdCounter = 1; // Start token IDs from 1
+        _baseTokenURI = baseTokenURI;
 
         // Store daily amounts and limits
         for (uint256 i = 0; i < _dailyTokenAmounts.length; i++) {
@@ -303,5 +308,29 @@ contract DepositThresholdNFT is ERC721, Ownable, ReentrancyGuard, Pausable {
      */
     function setApprovalForAll(address, bool) public pure override {
         revert("DepositThresholdNFT: Operator approvals are disabled");
+    }
+
+    /**
+     * @dev Returns the base URI for token metadata
+     */
+    function _baseURI() internal view override returns (string memory) {
+        return _baseTokenURI;
+    }
+
+    /**
+     * @dev Returns the URI for a given token ID
+     */
+    function tokenURI(
+        uint256 tokenId
+    ) public view override returns (string memory) {
+        _requireOwned(tokenId);
+        return string(abi.encodePacked(_baseURI(), Strings.toString(tokenId)));
+    }
+
+    /**
+     * @dev Allows the owner to update the base URI for token metadata
+     */
+    function setBaseURI(string memory baseURI) external onlyOwner {
+        _baseTokenURI = baseURI;
     }
 }

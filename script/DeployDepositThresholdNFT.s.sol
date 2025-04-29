@@ -60,7 +60,8 @@ contract DeployDepositThresholdNFT is Script {
             dailyTokenAmounts,
             dailyWhitelistLimits,
             campaignDuration,
-            admin
+            admin,
+            "https://sample.com/"
         );
         console.log("DepositThresholdNFT deployed at:", address(depositNFT));
 
