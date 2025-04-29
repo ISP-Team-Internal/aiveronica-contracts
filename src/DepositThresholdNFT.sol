@@ -1,16 +1,17 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity 0.8.20;
 
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
+import "@openzeppelin/contracts/utils/Pausable.sol";
 
 /**
  * @title DepositThresholdNFT
  * @dev An ERC721 contract for a whitelist campaign with ERC20 token deposits, admin withdrawals, and daily limits.
  */
-contract DepositThresholdNFT is ERC721, Ownable, ReentrancyGuard {
+contract DepositThresholdNFT is ERC721, Ownable, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
 
     IERC20 public immutable token; // ERC20 token address
@@ -24,6 +25,7 @@ contract DepositThresholdNFT is ERC721, Ownable, ReentrancyGuard {
 
     mapping(uint256 => uint256) public dailyWhitelistCount; // Tracks whitelist count per day
     mapping(address => uint256) public lastPurchaseDay; // Tracks the last day a user made a purchase
+    mapping(address => bool) public hasPurchased; // Tracks whether a user has ever purchased
 
     event MintedNFT(
         address indexed user,
@@ -32,12 +34,18 @@ contract DepositThresholdNFT is ERC721, Ownable, ReentrancyGuard {
         uint256 day
     );
     event AdminWithdrawal(uint256 amount, address indexed to);
+    event EmergencyWithdrawal(
+        address indexed token,
+        uint256 amount,
+        address indexed to
+    );
     event CampaignInitialized(
         uint256 startingTimestamp,
         address token,
         uint256[] dailyTokenAmounts,
         uint256[] dailyWhitelistLimits,
-        uint256 campaignDuration
+        uint256 campaignDuration,
+        address initialOwner
     );
 
     constructor(
@@ -65,6 +73,7 @@ contract DepositThresholdNFT is ERC721, Ownable, ReentrancyGuard {
             _dailyWhitelistLimits.length == _campaignDuration / SECONDS_PER_DAY,
             "Whitelist limits length must match campaign duration in days"
         );
+        require(_initialOwner != address(0), "Invalid initial owner address");
 
         // Validate that all daily amounts and limits are greater than 0
         for (uint256 i = 0; i < _dailyTokenAmounts.length; i++) {
@@ -97,25 +106,25 @@ contract DepositThresholdNFT is ERC721, Ownable, ReentrancyGuard {
             _tokenAddress,
             _dailyTokenAmounts,
             _dailyWhitelistLimits,
-            _campaignDuration
+            _campaignDuration,
+            _initialOwner
         );
-    }
-
-    modifier campaignActive() {
-        require(block.timestamp >= startingTimestamp, "Campaign is not active");
-        require(
-            block.timestamp < startingTimestamp + campaignDuration,
-            "Campaign has ended"
-        );
-        _;
     }
 
     // --- Admin Functions ---
 
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    function unpause() external onlyOwner {
+        _unpause();
+    }
+
     function adminWithdraw(
         uint256 _amount,
         address _to
-    ) external nonReentrant onlyOwner {
+    ) external nonReentrant onlyOwner whenNotPaused {
         require(_to != address(0), "Invalid recipient address");
         require(_amount > 0, "Amount must be greater than 0");
         require(
@@ -126,21 +135,57 @@ contract DepositThresholdNFT is ERC721, Ownable, ReentrancyGuard {
         emit AdminWithdrawal(_amount, _to);
     }
 
+    /**
+     * @dev Allows the owner to withdraw any ETH that might be accidentally sent to the contract
+     */
+    function withdrawETH(address payable _to) external nonReentrant onlyOwner {
+        require(_to != address(0), "Invalid recipient address");
+        uint256 balance = address(this).balance;
+        require(balance > 0, "No ETH balance to withdraw");
+        (bool success, ) = _to.call{value: balance}("");
+        require(success, "ETH transfer failed");
+        emit EmergencyWithdrawal(address(0), balance, _to);
+    }
+
+    /**
+     * @dev Allows the owner to withdraw any ERC20 tokens that might be accidentally sent to the contract
+     * @param _token The address of the ERC20 token to withdraw
+     * @param _to The address to send the tokens to
+     */
+    function withdrawERC20(
+        IERC20 _token,
+        address _to
+    ) external nonReentrant onlyOwner {
+        require(_to != address(0), "Invalid recipient address");
+        require(
+            address(_token) != address(token),
+            "Use adminWithdraw for campaign token"
+        );
+        uint256 balance = _token.balanceOf(address(this));
+        require(balance > 0, "No token balance to withdraw");
+        _token.safeTransfer(_to, balance);
+        emit EmergencyWithdrawal(address(_token), balance, _to);
+    }
+
     // --- User Functions ---
 
     /**
      * @dev Mints an NFT by depositing the required ERC20 tokens for the current day.
      *      Reverts if the daily whitelist limit is reached or if the user has already minted today.
      */
-    function mint() external nonReentrant campaignActive {
+    function mint() external nonReentrant whenNotPaused {
         uint256 currentDay = getCurrentDay();
         require(
-            dailyWhitelistCount[currentDay] <
-                dailyWhitelistLimits[currentDay - 1],
+            currentDay != type(uint256).max,
+            "Campaign is not active or has ended"
+        );
+        require(
+            dailyWhitelistCount[currentDay] < dailyWhitelistLimits[currentDay],
             "Daily whitelist limit reached"
         );
         require(
-            lastPurchaseDay[msg.sender] != currentDay,
+            !hasPurchased[msg.sender] ||
+                lastPurchaseDay[msg.sender] != currentDay,
             "Already purchased today"
         );
 
@@ -149,6 +194,10 @@ contract DepositThresholdNFT is ERC721, Ownable, ReentrancyGuard {
             token.balanceOf(msg.sender) >= requiredAmount,
             "Insufficient token balance"
         );
+        require(
+            token.allowance(msg.sender, address(this)) >= requiredAmount,
+            "Insufficient token allowance. Please approve the contract to spend your tokens first"
+        );
         // Store the next token ID
         uint256 tokenId = _tokenIdCounter;
 
@@ -156,6 +205,7 @@ contract DepositThresholdNFT is ERC721, Ownable, ReentrancyGuard {
         _tokenIdCounter += 1;
         dailyWhitelistCount[currentDay] += 1;
         lastPurchaseDay[msg.sender] = currentDay; // Record the purchase day
+        hasPurchased[msg.sender] = true; // Mark user as having purchased
 
         // External interactions last
         token.safeTransferFrom(msg.sender, address(this), requiredAmount);
@@ -165,30 +215,29 @@ contract DepositThresholdNFT is ERC721, Ownable, ReentrancyGuard {
     }
 
     /**
-     * @dev Get the current day of the campaign (1-based index).
-     * @return uint256 The current day (1 to numDays) or 0 if before campaign start.
+     * @dev Get the current day of the campaign (0-based index).
+     * @return uint256 The current day (0 to numDays-1) or type(uint256).max if before campaign start or after campaign end.
      */
     function getCurrentDay() public view returns (uint256) {
         if (block.timestamp < startingTimestamp) {
-            return 0;
+            return type(uint256).max;
         }
-        uint256 day = ((block.timestamp - startingTimestamp) /
-            SECONDS_PER_DAY) + 1;
+        uint256 day = (block.timestamp - startingTimestamp) / SECONDS_PER_DAY;
         uint256 totalDays = campaignDuration / SECONDS_PER_DAY;
-        return day <= totalDays ? day : 0;
+        return day < totalDays ? day : type(uint256).max;
     }
 
     /**
      * @dev Calculate the required deposit amount for a given day.
-     * @param _day The day of the campaign (1 to numDays).
+     * @param _day The day of the campaign (0 to numDays-1).
      * @return uint256 The required deposit amount.
      */
     function getRequiredDepositAmount(
         uint256 _day
     ) public view returns (uint256) {
         uint256 totalDays = campaignDuration / SECONDS_PER_DAY;
-        require(_day >= 1 && _day <= totalDays, "Invalid day");
-        return dailyTokenAmounts[_day - 1];
+        require(_day < totalDays, "Invalid day");
+        return dailyTokenAmounts[_day];
     }
 
     /**
@@ -198,12 +247,11 @@ contract DepositThresholdNFT is ERC721, Ownable, ReentrancyGuard {
     function getRemainingWhitelistsToday() public view returns (uint256) {
         uint256 currentDay = getCurrentDay();
         uint256 totalDays = campaignDuration / SECONDS_PER_DAY;
-        if (currentDay < 1 || currentDay > totalDays) {
+        if (currentDay == type(uint256).max || currentDay >= totalDays) {
             return 0;
         }
         return
-            dailyWhitelistLimits[currentDay - 1] -
-            dailyWhitelistCount[currentDay];
+            dailyWhitelistLimits[currentDay] - dailyWhitelistCount[currentDay];
     }
 
     /**
