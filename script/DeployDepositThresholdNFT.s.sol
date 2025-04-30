@@ -10,11 +10,11 @@ contract DeployDepositThresholdNFT is Script {
         // Load environment variables
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address admin = vm.envAddress("ADMIN_ADDRESS");
-        uint256 startingTimestamp = block.timestamp + 1 hours; // Example: Start in 1 hour
-        uint256 campaignDuration = 14 days; // Standard two-week campaign
+        // uint256 startingTimestamp = block.timestamp + 1 hours; // ? Testnet: Start in 1 hour
+        uint256 startingTimestamp = 1746547200; // * Mainnet: Actual start time
+        uint256 campaignDuration = 14 days; // * Standard two-week campaign
 
-        //     60 	    66 	    73 	    80 	    88 	    97 	   106 	   117 	   129 	   141 	   156 	   171 	   188 	   207
-
+        // TODO: confirm the actual values for the whitelist sale
         uint256[] memory dailyTokenAmounts = new uint256[](14);
         dailyTokenAmounts[0] = 60 * 10 ** 18; // Day 1: 1000 tokens
         dailyTokenAmounts[1] = 66 * 10 ** 18; // Day 2: 1100 tokens
@@ -32,6 +32,7 @@ contract DeployDepositThresholdNFT is Script {
         dailyTokenAmounts[13] = 207 * 10 ** 18; // Day 14: 3000 tokens
 
         // Set up daily whitelist limits (can be different for each day)
+        // TODO: confirm the actual values for the whitelist sale
         uint256[] memory dailyWhitelistLimits = new uint256[](14);
         dailyWhitelistLimits[0] = 1000;
         dailyWhitelistLimits[1] = 2000;
