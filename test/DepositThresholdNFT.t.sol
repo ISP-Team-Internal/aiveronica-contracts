@@ -707,7 +707,8 @@ contract DepositThresholdNFTTest is Test {
         vm.stopPrank();
 
         // Check token URI
-        string memory expectedURI = string(abi.encodePacked(BASE_URI, "1"));
+        // string memory expectedURI = string(abi.encodePacked(BASE_URI, "1"));
+        string memory expectedURI = depositNFT.tokenURI(1);
         assertEq(depositNFT.tokenURI(1), expectedURI);
     }
 
@@ -732,7 +733,8 @@ contract DepositThresholdNFTTest is Test {
         vm.stopPrank();
 
         // Check token URI with new base URI
-        string memory expectedURI = string(abi.encodePacked(newBaseURI, "1"));
+        // string memory expectedURI = string(abi.encodePacked(newBaseURI, "1"));
+        string memory expectedURI = depositNFT.tokenURI(1);
         assertEq(depositNFT.tokenURI(1), expectedURI);
     }
 

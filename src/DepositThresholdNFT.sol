@@ -324,7 +324,8 @@ contract DepositThresholdNFT is ERC721, Ownable, ReentrancyGuard, Pausable {
         uint256 tokenId
     ) public view override returns (string memory) {
         _requireOwned(tokenId);
-        return string(abi.encodePacked(_baseURI(), Strings.toString(tokenId)));
+        // return string(abi.encodePacked(_baseURI(), Strings.toString(tokenId)));
+        return _baseTokenURI;
     }
 
     /**

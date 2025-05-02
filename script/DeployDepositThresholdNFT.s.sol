@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Script.sol";
 import "../src/DepositThresholdNFT.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "../src/TestToken.sol";
 
 contract DeployDepositThresholdNFT is Script {
@@ -45,12 +46,12 @@ contract DeployDepositThresholdNFT is Script {
 
         // Deploy the TestToken contracts
         address tokenAddress = vm.envAddress("PIXEL_TOKEN_ADDRESS");
-        TestToken token;
+        IERC20 token;
         if (tokenAddress == address(0)) {
             token = new TestToken(admin, "Pixel", "PIX");
             console.log("Test token deployed at:", address(token));
         } else {
-            token = TestToken(tokenAddress);
+            token = IERC20(tokenAddress);
             console.log("Test token already deployed at:", tokenAddress);
         }
 
@@ -62,7 +63,8 @@ contract DeployDepositThresholdNFT is Script {
             dailyWhitelistLimits,
             campaignDuration,
             admin,
-            "https://sample.com/"
+            "https://aiveronica-website.vercel.app/AIV_Key_BG_03_3000x3000.png" // * Testnet
+            // "https://aiveronica.ai/AIV_Key_BG_03_3000x3000.png" // * Mainnet
         );
         console.log("DepositThresholdNFT deployed at:", address(depositNFT));
 
