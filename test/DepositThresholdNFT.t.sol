@@ -735,7 +735,9 @@ contract DepositThresholdNFTTest is Test {
         // Check token URI with new base URI
         // string memory expectedURI = string(abi.encodePacked(newBaseURI, "1"));
         string memory expectedURI = depositNFT.tokenURI(1);
-        assertEq(depositNFT.tokenURI(1), expectedURI);
+        string memory result = depositNFT.tokenURI(1);
+        console.log("result: %s", result);
+        assertEq(result, expectedURI);
     }
 
     function testNonAdminCannotUpdateBaseURI() public {

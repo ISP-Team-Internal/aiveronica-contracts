@@ -11,8 +11,8 @@ contract DeployDepositThresholdNFT is Script {
         // Load environment variables
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address admin = vm.envAddress("ADMIN_ADDRESS");
-        // uint256 startingTimestamp = block.timestamp + 1 hours; // ? Testnet: Start in 1 hour
-        uint256 startingTimestamp = 1746547200; // * Mainnet: Actual start time
+        uint256 startingTimestamp = block.timestamp + 60; // ? Testnet: Start in 1 hour
+        // uint256 startingTimestamp = 1746547200; // * Mainnet: Actual start time
         uint256 campaignDuration = 14 days; // * Standard two-week campaign
 
         // TODO: confirm the actual values for the whitelist sale
