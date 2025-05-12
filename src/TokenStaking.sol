@@ -4,12 +4,13 @@ pragma solidity ^0.8.0;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/Pausable.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 
-contract TokenStaking is ReentrancyGuard {
+contract TokenStaking is ReentrancyGuard, Pausable, Ownable {
     using SafeERC20 for IERC20;
 
     // Constants for security improvement
-    uint256 public constant MAX_STAKES_PER_USER = 10;
     uint256 public constant MIN_STAKE_AMOUNT_FACTOR = 1e12; // 1e-6 of tokens (assuming 18 decimals)
 
     IERC20 public immutable stakingToken;
@@ -19,41 +20,89 @@ contract TokenStaking is ReentrancyGuard {
         uint256 amount;
         uint256 startTime;
         uint256 period; // Chosen staking period for this stake
-        bool withdrawn;
     }
 
-    mapping(address => Stake[]) public userStakes;
+    mapping(address => Stake) public userStake;
     mapping(address => uint256) public activeStakeCount;
 
     // Enhanced events with more data and indexing
-    event Staked(address indexed user, uint256 indexed stakeIndex, uint256 amount, uint256 period, uint256 startTime, uint256 endTime);
-    event Withdrawn(address indexed user, uint256 indexed stakeIndex, uint256 amount, uint256 stakedFor);
-    event StakeReplaced(address indexed user, uint256 indexed stakeIndex, uint256 oldAmount, uint256 newAmount);
+    event Staked(
+        address indexed user,
+        uint256 amount,
+        uint256 period,
+        uint256 startTime,
+        uint256 endTime
+    );
+    event Withdrawn(address indexed user, uint256 amount);
+    event StakeReplaced(
+        address indexed user,
+        uint256 oldAmount,
+        uint256 newAmount,
+        uint256 newPeriod,
+        uint256 newStartTime,
+        uint256 newEndTime
+    );
+    event StakeExtended(
+        address indexed user,
+        uint256 amount,
+        uint256 newPeriod,
+        uint256 newStartTime,
+        uint256 newEndTime
+    );
 
-    constructor(address _stakingToken, uint256[] memory _stakingPeriods) {
+    constructor(address _stakingToken, uint256[] memory _stakingPeriods) Ownable(msg.sender) {
         require(_stakingToken != address(0), "Invalid token address");
-        require(_stakingPeriods.length > 0, "Must provide at least one staking period");
+        require(
+            _stakingPeriods.length > 0,
+            "Must provide at least one staking period"
+        );
         for (uint256 i = 0; i < _stakingPeriods.length; i++) {
-            require(_stakingPeriods[i] > 0, "Staking period must be greater than 0");
+            require(
+                _stakingPeriods[i] > 0,
+                "Staking period must be greater than 0"
+            );
             stakingPeriods.push(_stakingPeriods[i]);
         }
         stakingToken = IERC20(_stakingToken);
+    }
+
+    // --- Admin Functions ---
+
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    function unpause() external onlyOwner {
+        _unpause();
     }
 
     function getStakingPeriods() external view returns (uint256[] memory) {
         return stakingPeriods;
     }
 
+    function isStakeExpired(Stake memory _stake) internal view returns (bool) {
+        return
+            _stake.amount > 0 &&
+            _stake.startTime + _stake.period < block.timestamp;
+    }
+
+    function isUserStakedBefore(address user) internal view returns (bool) {
+        return userStake[user].amount > 0 && userStake[user].period >= 0;
+    }
+
     /**
      * @notice Stake tokens for a specific period
      * @param _amount Amount of tokens to stake
      * @param _periodIndex Index of the staking period
-     * @return stakeIndex The index of the stake that was created or replaced
-     * @return isNewStake Whether a new stake was created or an existing one was replaced
      */
-    function stake(uint256 _amount, uint256 _periodIndex) external nonReentrant returns (uint256 stakeIndex, bool isNewStake) {
-        require(_amount > 0, "Amount must be greater than 0");
-        require(_amount >= MIN_STAKE_AMOUNT_FACTOR, "Amount below minimum stake threshold");
+    function stake(
+        uint256 _amount,
+        uint256 _periodIndex
+    ) external whenNotPaused nonReentrant {
+        require(
+            _amount >= MIN_STAKE_AMOUNT_FACTOR,
+            "Amount below minimum stake threshold"
+        );
         require(_periodIndex < stakingPeriods.length, "Invalid period index");
 
         uint256 chosenPeriod = stakingPeriods[_periodIndex];
@@ -63,108 +112,69 @@ contract TokenStaking is ReentrancyGuard {
         Stake memory newStake = Stake({
             amount: _amount,
             startTime: block.timestamp,
-            period: chosenPeriod,
-            withdrawn: false
+            period: chosenPeriod
         });
+        Stake storage oldStake = userStake[msg.sender];
 
-        // Check if we can replace a withdrawn stake
-        for (uint256 i = 0; i < userStakes[msg.sender].length; i++) {
-            if (userStakes[msg.sender][i].withdrawn) {
-                uint256 oldAmount = userStakes[msg.sender][i].amount;
-                userStakes[msg.sender][i] = newStake;
-                emit StakeReplaced(msg.sender, i, oldAmount, _amount);
-                activeStakeCount[msg.sender]++;
-                
-                // Return the replaced stake index
-                return (i, false);
-            }
+        // * User has not staked before
+        // simply create a new stake
+        if (!isUserStakedBefore(msg.sender)) {
+            userStake[msg.sender] = newStake;
+            return;
         }
-
-        // Check if max stakes limit is reached
-        require(
-            activeStakeCount[msg.sender] < MAX_STAKES_PER_USER,
-            "Maximum active stakes reached"
-        );
-
-        // Create a new stake
-        userStakes[msg.sender].push(newStake);
-        activeStakeCount[msg.sender]++;
-        
-        // Calculate end time for the event
-        uint256 endTime = block.timestamp + chosenPeriod;
-        
-        // Emit enhanced stake event
-        emit Staked(
-            msg.sender, 
-            userStakes[msg.sender].length - 1, 
-            _amount, 
-            chosenPeriod, 
-            block.timestamp, 
-            endTime
-        );
-        
-        // Return the new stake index
-        return (userStakes[msg.sender].length - 1, true);
+        // * User has staked before
+        if (isStakeExpired(oldStake)) {
+            // * check if the previous stake is withdrawn
+            require(oldStake.amount > 0, "Previous stake is not withdrawn");
+            userStake[msg.sender] = newStake;
+        } else {
+            // * User has staked before and the stake is not expired
+            require(
+                oldStake.period >= chosenPeriod,
+                "New stake period is shorter than the previous stake"
+            );
+            newStake.amount += oldStake.amount;
+        }
     }
 
     /**
      * @notice Withdraw tokens from a stake after lock period
-     * @param _stakeIndex Index of the stake to withdraw
      * @return success Whether the withdrawal was successful
      * @return amount Amount of tokens withdrawn
      */
-    function withdraw(uint256 _stakeIndex) external nonReentrant returns (bool success, uint256 amount) {
-        require(_stakeIndex < userStakes[msg.sender].length, "Invalid stake index");
+    function withdraw()
+        external
+        nonReentrant
+        returns (bool success, uint256 amount)
+    {
+        require(isUserStakedBefore(msg.sender), "User has not staked before");
+        require(isStakeExpired(userStake[msg.sender]), "Stake is not expired");
 
-        Stake storage stake = userStakes[msg.sender][_stakeIndex];
-        require(!stake.withdrawn, "Already withdrawn");
-        require(block.timestamp >= stake.startTime + stake.period, "Lock period not ended");
-
-        amount = stake.amount;
-        uint256 stakedFor = block.timestamp - stake.startTime;
-        
-        stake.withdrawn = true;
-        activeStakeCount[msg.sender]--;
-
-        stakingToken.safeTransfer(msg.sender, amount);
+        stakingToken.safeTransfer(msg.sender, userStake[msg.sender].amount);
 
         // Emit enhanced withdrawal event
-        emit Withdrawn(msg.sender, _stakeIndex, amount, stakedFor);
-        
+        emit Withdrawn(msg.sender, amount);
+
         return (true, amount);
     }
 
-    function getStakeInfo(address _user, uint256 _stakeIndex) 
-        external 
-        view 
-        returns (
-            uint256 amount,
-            uint256 startTime,
-            uint256 period,
-            bool withdrawn,
-            uint256 timeLeft
-        ) 
-    {
-        require(_stakeIndex < userStakes[_user].length, "Invalid stake index");
+    function extendStaking(uint256 _periodIndex) external whenNotPaused nonReentrant {
+        require(isUserStakedBefore(msg.sender), "User has not staked before");
+        Stake storage _stake = userStake[msg.sender];
+        require(isStakeExpired(_stake), "Stake is not expired");
+        require(_periodIndex < stakingPeriods.length, "Invalid period index");
 
-        Stake memory stake = userStakes[_user][_stakeIndex];
-        uint256 endTime = stake.startTime + stake.period;
-        uint256 remainingTime = block.timestamp >= endTime ? 0 : endTime - block.timestamp;
+        uint256 newPeriod = stakingPeriods[_periodIndex];
 
-        return (
-            stake.amount,
-            stake.startTime,
-            stake.period,
-            stake.withdrawn,
-            remainingTime
+        _stake.startTime = block.timestamp;
+        _stake.period = newPeriod;
+
+        emit StakeExtended(
+            msg.sender,
+            _stake.amount,
+            newPeriod,
+            _stake.startTime,
+            _stake.startTime + newPeriod
         );
-    }
-
-    function getStakeCount(address _user) external view returns (uint256) {
-        return userStakes[_user].length;
-    }
-    
-    function getActiveStakeCount(address _user) external view returns (uint256) {
-        return activeStakeCount[_user];
     }
 }
