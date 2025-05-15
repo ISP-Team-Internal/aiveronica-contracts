@@ -23,7 +23,6 @@ contract TokenStaking is ReentrancyGuard, Pausable, Ownable {
     }
 
     mapping(address => Stake) public userStake;
-    mapping(address => uint256) public activeStakeCount;
 
     // Enhanced events with more data and indexing
     event Staked(
@@ -50,7 +49,10 @@ contract TokenStaking is ReentrancyGuard, Pausable, Ownable {
         uint256 newEndTime
     );
 
-    constructor(address _stakingToken, uint256[] memory _stakingPeriods) Ownable(msg.sender) {
+    constructor(
+        address _stakingToken,
+        uint256[] memory _stakingPeriods
+    ) Ownable(msg.sender) {
         require(_stakingToken != address(0), "Invalid token address");
         require(
             _stakingPeriods.length > 0,
@@ -125,16 +127,16 @@ contract TokenStaking is ReentrancyGuard, Pausable, Ownable {
         // * User has staked before
         if (isStakeExpired(oldStake)) {
             // * check if the previous stake is withdrawn
-            require(oldStake.amount > 0, "Previous stake is not withdrawn");
-            userStake[msg.sender] = newStake;
+            require(oldStake.amount == 0, "Previous stake is not withdrawn");
         } else {
             // * User has staked before and the stake is not expired
             require(
-                oldStake.period >= chosenPeriod,
+                chosenPeriod >= oldStake.period,
                 "New stake period is shorter than the previous stake"
             );
             newStake.amount += oldStake.amount;
         }
+        userStake[msg.sender] = newStake;
     }
 
     /**
@@ -149,16 +151,22 @@ contract TokenStaking is ReentrancyGuard, Pausable, Ownable {
     {
         require(isUserStakedBefore(msg.sender), "User has not staked before");
         require(isStakeExpired(userStake[msg.sender]), "Stake is not expired");
-
-        stakingToken.safeTransfer(msg.sender, userStake[msg.sender].amount);
-
+        amount = userStake[msg.sender].amount;
+        stakingToken.safeTransfer(msg.sender, amount);
+        userStake[msg.sender].amount = 0;
         // Emit enhanced withdrawal event
         emit Withdrawn(msg.sender, amount);
 
         return (true, amount);
     }
 
-    function extendStaking(uint256 _periodIndex) external whenNotPaused nonReentrant {
+    /**
+     * @notice Extend the staking period
+     * @param _periodIndex Index of the new staking period
+     */
+    function extendStaking(
+        uint256 _periodIndex
+    ) external whenNotPaused nonReentrant {
         require(isUserStakedBefore(msg.sender), "User has not staked before");
         Stake storage _stake = userStake[msg.sender];
         require(isStakeExpired(_stake), "Stake is not expired");

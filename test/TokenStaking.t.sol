@@ -206,4 +206,51 @@ contract TokenStakingTest is Test {
         stakingContract.extendStaking(newPeriodIndex);
         vm.stopPrank();
     }
+
+    // --- Additional Revert Tests ---
+    function testCannotStakeWithShorterPeriod() public {
+        // First stake with a longer period (30 days)
+        approveAndStake(user1, 1000 * 10**18, 1); // 30 days
+        
+        // Try to stake again with a shorter period (7 days)
+        vm.startPrank(user1);
+        stakingToken.approve(address(stakingContract), 1000 * 10**18);
+        vm.expectRevert("New stake period is shorter than the previous stake");
+        stakingContract.stake(1000 * 10**18, 0); // 7 days
+        vm.stopPrank();
+    }
+
+    function testCannotStakeWithZeroTokenAddress() public {
+        vm.expectRevert("Invalid token address");
+        new TokenStaking(address(0), stakingPeriods);
+    }
+
+    function testCannotStakeWithEmptyPeriods() public {
+        uint256[] memory emptyPeriods = new uint256[](0);
+        vm.expectRevert("Must provide at least one staking period");
+        new TokenStaking(address(stakingToken), emptyPeriods);
+    }
+
+    function testCannotStakeWithZeroPeriod() public {
+        uint256[] memory invalidPeriods = new uint256[](1);
+        invalidPeriods[0] = 0;
+        vm.expectRevert("Staking period must be greater than 0");
+        new TokenStaking(address(stakingToken), invalidPeriods);
+    }
+
+    function testCannotStakeWithExpiredStakeNotWithdrawn() public {
+        // First stake
+        approveAndStake(user1, 1000 * 10**18, 0); // 7 days
+        
+        // Warp past the staking period
+        warpForward(7 days + 1);
+
+        // Try to stake again without withdrawing the expired stake
+        vm.startPrank(user1);
+        stakingToken.approve(address(stakingContract), 1000 * 10**18);
+        // (uint256 amount, uint256 startTime, uint256 period) = stakingContract.userStake(user1);
+        vm.expectRevert("Previous stake is not withdrawn");
+        stakingContract.stake(1000 * 10**18, 0);
+        vm.stopPrank();
+    }
 }
