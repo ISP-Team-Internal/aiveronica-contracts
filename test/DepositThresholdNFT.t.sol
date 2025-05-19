@@ -736,7 +736,6 @@ contract DepositThresholdNFTTest is Test {
         // string memory expectedURI = string(abi.encodePacked(newBaseURI, "1"));
         string memory expectedURI = depositNFT.tokenURI(1);
         string memory result = depositNFT.tokenURI(1);
-        console.log("result: %s", result);
         assertEq(result, expectedURI);
     }
 
