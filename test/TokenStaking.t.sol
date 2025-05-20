@@ -253,4 +253,201 @@ contract TokenStakingTest is Test {
         stakingContract.stake(1000 * 10**18, 0);
         vm.stopPrank();
     }
+
+    // --- Pause Functionality Tests ---
+    function testPauseUnpause() public {
+        vm.startPrank(address(this));
+        stakingContract.pauseStaking();
+        assertTrue(stakingContract.paused());
+        
+        // Try to stake while paused
+        vm.stopPrank();
+        vm.startPrank(user1);
+        stakingToken.approve(address(stakingContract), 1000 * 10**18);
+        vm.expectRevert(bytes4(keccak256("EnforcedPause()")));
+        stakingContract.stake(1000 * 10**18, 0);
+        vm.stopPrank();
+        
+        // Unpause
+        vm.startPrank(address(this));
+        stakingContract.unpauseStaking();
+        assertFalse(stakingContract.paused());
+        vm.stopPrank();
+        
+        // Now should be able to stake
+        approveAndStake(user1, 1000 * 10**18, 0);
+    }
+    
+    function testOnlyOwnerCanPause() public {
+        vm.startPrank(user1);
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", user1));
+        stakingContract.pauseStaking();
+        vm.stopPrank();
+    }
+    
+    // --- Urgent Withdraw Tests ---
+    function testUrgentWithdraw() public {
+        uint256 stakeAmount = 1000 * 10**18;
+        approveAndStake(user1, stakeAmount, 1); // 30 days
+        
+        uint256 initialBalance = stakingToken.balanceOf(user1);
+        uint256 withdrawAmount = 500 * 10**18;
+        
+        vm.startPrank(user1);
+        stakingContract.urgentWithdraw(withdrawAmount);
+        vm.stopPrank();
+        
+        // Check user balance increased
+        assertEq(stakingToken.balanceOf(user1), initialBalance + withdrawAmount);
+        
+        // Check stake was reduced
+        (uint256 remainingAmount,,) = stakingContract.userStake(user1);
+        assertEq(remainingAmount, stakeAmount - withdrawAmount); // No penalty in this test since calculatePenalty returns 0
+    }
+    
+    function testCannotUrgentWithdrawAfterExpiry() public {
+        approveAndStake(user1, 1000 * 10**18, 0); // 7 days
+        
+        // Warp past the staking period
+        warpForward(7 days + 1);
+        
+        vm.startPrank(user1);
+        vm.expectRevert("Stake is expired, use withdraw() instead");
+        stakingContract.urgentWithdraw(500 * 10**18);
+        vm.stopPrank();
+    }
+    
+    function testCannotWithdrawMoreThanStaked() public {
+        uint256 stakeAmount = 1000 * 10**18;
+        approveAndStake(user1, stakeAmount, 1); // 30 days
+        
+        vm.startPrank(user1);
+        vm.expectRevert("Amount to withdraw with penalty is greater than the stake");
+        stakingContract.urgentWithdraw(stakeAmount + 1);
+        vm.stopPrank();
+    }
+    
+    function testPreventSecondUrgentWithdraw() public {
+        approveAndStake(user1, 1000 * 10**18, 1); // 30 days
+        
+        vm.startPrank(user1);
+        stakingContract.urgentWithdraw(500 * 10**18);
+        
+        vm.expectRevert("User has already urgent withdrawn");
+        stakingContract.urgentWithdraw(100 * 10**18);
+        vm.stopPrank();
+    }
+
+    // --- Penalty Functions Tests ---
+    function testPreviewEarlyWithdrawPenalty() public {
+        uint256 stakeAmount = 1000 * 10**18;
+        approveAndStake(user1, stakeAmount, 1); // 30 days
+        
+        (,uint256 startTime, uint256 period) = stakingContract.userStake(user1);
+        uint256 withdrawAmount = 500 * 10**18;
+        
+        uint256 penaltyAmount = stakingContract.previewEarlyWithdrawPenalty(
+            stakeAmount,
+            startTime + period,
+            period,
+            withdrawAmount
+        );
+        
+        // Currently penalty is 0 in the implementation
+        assertEq(penaltyAmount, 0);
+    }
+    
+    function testGetUserMaxUrgentWithdraw() public {
+        uint256 stakeAmount = 1000 * 10**18;
+        approveAndStake(user1, stakeAmount, 1); // 30 days
+        
+        uint256 maxWithdraw = stakingContract.getUserMaxUrgentWithdraw(user1);
+        assertEq(maxWithdraw, stakeAmount);
+    }
+    
+    function testWithdrawPenaltyLockedAmount() public {
+        uint256 stakeAmount = 1000 * 10**18;
+        approveAndStake(user1, stakeAmount, 1); // 30 days
+        
+        // Since penalty is 0 in implementation, let's first check that
+        assertEq(stakingContract.getPenaltyLockedAmount(), 0);
+        
+        // Try to withdraw penalty without any locked amount
+        vm.startPrank(address(this));
+        vm.expectRevert("No penalty locked amount");
+        stakingContract.withdrawPenaltyLockedAmount();
+        vm.stopPrank();
+    }
+    
+    function testOnlyOwnerCanWithdrawPenalty() public {
+        vm.startPrank(user1);
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", user1));
+        stakingContract.withdrawPenaltyLockedAmount();
+        vm.stopPrank();
+    }
+    
+    // --- Add to Existing Stake Tests ---
+    function testAddToExistingStake() public {
+        uint256 initialStake = 1000 * 10**18;
+        uint256 additionalStake = 500 * 10**18;
+        uint256 periodIndex = 1; // 30 days
+        
+        // Initial stake
+        approveAndStake(user1, initialStake, periodIndex);
+        
+        // Add to existing stake
+        vm.startPrank(user1);
+        stakingToken.approve(address(stakingContract), additionalStake);
+        stakingContract.stake(additionalStake, periodIndex);
+        vm.stopPrank();
+        
+        // Check total stake
+        (uint256 totalAmount,,) = stakingContract.userStake(user1);
+        assertEq(totalAmount, initialStake + additionalStake);
+    }
+    
+    // --- Event Emission Tests ---
+    function testStakeEventEmission() public {
+        uint256 stakeAmount = 1000 * 10**18;
+        uint256 periodIndex = 0; // 7 days
+        
+        vm.startPrank(user1);
+        stakingToken.approve(address(stakingContract), stakeAmount);
+        
+        vm.expectEmit(true, true, false, true);
+        emit Staked(user1, stakeAmount, stakingPeriods[periodIndex], block.timestamp, block.timestamp + stakingPeriods[periodIndex]);
+        stakingContract.stake(stakeAmount, periodIndex);
+        vm.stopPrank();
+    }
+    
+    function testWithdrawEventEmission() public {
+        uint256 stakeAmount = 1000 * 10**18;
+        approveAndStake(user1, stakeAmount, 0); // 7 days
+        
+        // Warp past staking period
+        warpForward(7 days + 1);
+        
+        vm.startPrank(user1);
+        vm.expectEmit(true, true, false, true);
+        emit Withdrawn(user1, stakeAmount, block.timestamp);
+        stakingContract.withdraw();
+        vm.stopPrank();
+    }
+    
+    function testUrgentWithdrawEventEmission() public {
+        uint256 stakeAmount = 1000 * 10**18;
+        uint256 withdrawAmount = 500 * 10**18;
+        approveAndStake(user1, stakeAmount, 1); // 30 days
+        
+        vm.startPrank(user1);
+        vm.expectEmit(true, true, true, true);
+        emit UrgentWithdrawn(user1, withdrawAmount, 0, block.timestamp);
+        stakingContract.urgentWithdraw(withdrawAmount);
+        vm.stopPrank();
+    }
+    
+    // --- Custom Events for Testing ---
+    event Staked(address indexed user, uint256 amount, uint256 period, uint256 startTime, uint256 endTime);
+    event Withdrawn(address indexed user, uint256 amount, uint256 timestamp);
+    event UrgentWithdrawn(address indexed user, uint256 amount, uint256 penalty, uint256 timestamp);
 }

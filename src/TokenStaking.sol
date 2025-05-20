@@ -17,6 +17,7 @@ contract TokenStaking is ITokenStaking, ReentrancyGuard, Pausable, Ownable {
     IERC20 public immutable override stakingToken;
     uint256[] private stakingPeriods; // Array of available staking periods
     uint256 private penaltyLockedAmount;
+    mapping(address => bool) private preventUrgentWithdraw;
 
     struct Stake {
         uint256 amount;
@@ -66,6 +67,13 @@ contract TokenStaking is ITokenStaking, ReentrancyGuard, Pausable, Ownable {
     function previewEarlyWithdrawPenalty(uint256 stakedAmount, uint256 unlocksAt, uint256 period, uint256 amountToWithdraw ) external pure override returns (uint256 penaltyAmount) {
         penaltyAmount = calculatePenalty(stakedAmount, unlocksAt, period, amountToWithdraw);
         return penaltyAmount;
+    }
+
+    // * Get the max amount of tokens user can urgent withdraw
+    // ! the result should exclude the penalty amount
+    // TODO: implement this
+    function getUserMaxUrgentWithdraw(address user) external view override returns (uint256) {
+        return userStake[user].amount;
     }
 
     function isStakeExpired(Stake memory _stake) internal view returns (bool) {
@@ -148,6 +156,7 @@ contract TokenStaking is ITokenStaking, ReentrancyGuard, Pausable, Ownable {
         // Emit enhanced withdrawal event
         emit Withdrawn(msg.sender, amount, block.timestamp);
 
+        preventUrgentWithdraw[msg.sender] = false;
         return (true, amount);
     }
 
@@ -167,6 +176,7 @@ contract TokenStaking is ITokenStaking, ReentrancyGuard, Pausable, Ownable {
 
         _stake.startTime = block.timestamp;
         _stake.period = newPeriod;
+        preventUrgentWithdraw[msg.sender] = false;
         emit Staked(msg.sender, _stake.amount, newPeriod, block.timestamp, block.timestamp + newPeriod);
     }
 
@@ -189,6 +199,7 @@ contract TokenStaking is ITokenStaking, ReentrancyGuard, Pausable, Ownable {
      */
     function urgentWithdraw(uint256 _amountActuallyWithdrawn) external override nonReentrant {
         require(isUserStakedBefore(msg.sender), "User has not staked before");
+        require(!preventUrgentWithdraw[msg.sender], "User has already urgent withdrawn");
         Stake storage _stake = userStake[msg.sender];
         require(!isStakeExpired(_stake), "Stake is expired, use withdraw() instead");
 
@@ -198,6 +209,7 @@ contract TokenStaking is ITokenStaking, ReentrancyGuard, Pausable, Ownable {
         stakingToken.safeTransfer(msg.sender, _amountActuallyWithdrawn);
         userStake[msg.sender].amount -= (_amountActuallyWithdrawn + penaltyAmount);
         penaltyLockedAmount += penaltyAmount;
+        preventUrgentWithdraw[msg.sender] = true;
         emit UrgentWithdrawn(msg.sender, _amountActuallyWithdrawn, penaltyAmount, block.timestamp);
     }
 

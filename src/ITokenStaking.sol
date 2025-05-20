@@ -30,6 +30,7 @@ interface ITokenStaking {
     function getStakingPeriods() external view returns (uint256[] memory);
     function getPenaltyLockedAmount() external view returns (uint256);
     function previewEarlyWithdrawPenalty(uint256 stakedAmount, uint256 unlocksAt, uint256 period, uint256 amountToWithdraw ) external pure returns (uint256 penaltyAmount);
+    function getUserMaxUrgentWithdraw(address user) external view returns (uint256);
 
     // State changing functions
     function stake(uint256 _amount, uint256 _periodIndex) external;
