@@ -28,14 +28,17 @@ interface ITokenStaking {
         uint256 period
     );
     function getStakingPeriods() external view returns (uint256[] memory);
+    function getPenaltyLockedAmount() external view returns (uint256);
+    function previewEarlyWithdrawPenalty(uint256 stakedAmount, uint256 unlocksAt, uint256 period, uint256 amountToWithdraw ) external pure returns (uint256 penaltyAmount);
 
     // State changing functions
     function stake(uint256 _amount, uint256 _periodIndex) external;
     function withdraw() external returns (bool success, uint256 amount);
     function extendStaking(uint256 _periodIndex) external;
-    function urgentWithdraw(uint256 _amount) external;
+    function urgentWithdraw(uint256 _amountActuallyWithdrawn) external;
 
     // Admin functions
-    function pause() external;
-    function unpause() external;
+    function pauseStaking() external;
+    function unpauseStaking() external;
+    function withdrawPenaltyLockedAmount() external;
 }

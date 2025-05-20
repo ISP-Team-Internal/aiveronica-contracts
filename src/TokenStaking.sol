@@ -16,6 +16,7 @@ contract TokenStaking is ITokenStaking, ReentrancyGuard, Pausable, Ownable {
 
     IERC20 public immutable override stakingToken;
     uint256[] private stakingPeriods; // Array of available staking periods
+    uint256 private penaltyLockedAmount;
 
     struct Stake {
         uint256 amount;
@@ -41,20 +42,30 @@ contract TokenStaking is ITokenStaking, ReentrancyGuard, Pausable, Ownable {
             stakingPeriods.push(_stakingPeriods[i]);
         }
         stakingToken = IERC20(_stakingToken);
+        penaltyLockedAmount = 0;
     }
 
     // --- Admin Functions ---
 
-    function pause() external override onlyOwner {
+    function pauseStaking() external override onlyOwner {
         _pause();
     }
 
-    function unpause() external override onlyOwner {
+    function unpauseStaking() external override onlyOwner {
         _unpause();
     }
 
     function getStakingPeriods() external view override returns (uint256[] memory) {
         return stakingPeriods;
+    }
+
+    function getPenaltyLockedAmount() external view override returns (uint256) {
+        return penaltyLockedAmount;
+    }
+
+    function previewEarlyWithdrawPenalty(uint256 stakedAmount, uint256 unlocksAt, uint256 period, uint256 amountToWithdraw ) external pure override returns (uint256 penaltyAmount) {
+        penaltyAmount = calculatePenalty(stakedAmount, unlocksAt, period, amountToWithdraw);
+        return penaltyAmount;
     }
 
     function isStakeExpired(Stake memory _stake) internal view returns (bool) {
@@ -159,15 +170,40 @@ contract TokenStaking is ITokenStaking, ReentrancyGuard, Pausable, Ownable {
         emit Staked(msg.sender, _stake.amount, newPeriod, block.timestamp, block.timestamp + newPeriod);
     }
 
+    // TODO: calculate penalty based on parameters
+    /**
+     * @notice Calculate penalty amount based on parameters
+     * @param stakedAmount Amount of tokens staked
+     * @param unlocksAt Timestamp when the stake unlocks
+     * @param period Staking period
+     * @param amountToWithdraw Amount of tokens to withdraw
+     * @return penaltyAmount Amount of penalty
+     */
+    function calculatePenalty(uint256 stakedAmount, uint256 unlocksAt, uint256 period, uint256 amountToWithdraw ) internal pure returns (uint256 penaltyAmount) {
+        return 0;
+    }
+
     /**
      * @notice Urgent withdraw for user to withdraw their stake earlier than the staking period with penalty
+     * @param _amountActuallyWithdrawn Amount of tokens user actually get
      */
-    function urgentWithdraw(uint256 _amount) external override {
+    function urgentWithdraw(uint256 _amountActuallyWithdrawn) external override nonReentrant {
         require(isUserStakedBefore(msg.sender), "User has not staked before");
-        require(!isStakeExpired(userStake[msg.sender]), "Stake is not expired, use withdraw() instead");
-        require(_amount <= userStake[msg.sender].amount, "Amount to withdraw is greater than the stake");
-        // TODO: calculate penalty
-        // stakingToken.safeTransfer(msg.sender, _amount);
-        // userStake[msg.sender].amount -= _amount;
+        Stake storage _stake = userStake[msg.sender];
+        require(!isStakeExpired(_stake), "Stake is expired, use withdraw() instead");
+
+        uint256 penaltyAmount = calculatePenalty(_stake.amount, _stake.startTime + _stake.period, _stake.period, _amountActuallyWithdrawn);
+        require(_amountActuallyWithdrawn + penaltyAmount <= _stake.amount, "Amount to withdraw with penalty is greater than the stake");
+
+        stakingToken.safeTransfer(msg.sender, _amountActuallyWithdrawn);
+        userStake[msg.sender].amount -= (_amountActuallyWithdrawn + penaltyAmount);
+        penaltyLockedAmount += penaltyAmount;
+        emit UrgentWithdrawn(msg.sender, _amountActuallyWithdrawn, penaltyAmount, block.timestamp);
+    }
+
+    function withdrawPenaltyLockedAmount() external override nonReentrant onlyOwner {
+        require(penaltyLockedAmount > 0, "No penalty locked amount");
+        stakingToken.safeTransfer(msg.sender, penaltyLockedAmount);
+        penaltyLockedAmount = 0;
     }
 }
