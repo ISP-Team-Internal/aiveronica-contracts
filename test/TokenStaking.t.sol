@@ -302,7 +302,8 @@ contract TokenStakingTest is Test {
         
         // Check stake was reduced
         (uint256 remainingAmount,,) = stakingContract.userStake(user1);
-        assertEq(remainingAmount, stakeAmount - withdrawAmount); // No penalty in this test since calculatePenalty returns 0
+        uint256 penaltyAmount = (withdrawAmount * 10) / 100; // 10% for 30 days staking period
+        assertEq(remainingAmount, stakeAmount - withdrawAmount - penaltyAmount);
     }
     
     function testCannotUrgentWithdrawAfterExpiry() public {
@@ -347,32 +348,261 @@ contract TokenStakingTest is Test {
         uint256 withdrawAmount = 500 * 10**18;
         
         uint256 penaltyAmount = stakingContract.previewEarlyWithdrawPenalty(
-            stakeAmount,
             startTime + period,
-            period,
             withdrawAmount
         );
         
-        // Currently penalty is 0 in the implementation
-        assertEq(penaltyAmount, 0);
+        // Expected penalty for 30 days left is 10%
+        uint256 expectedPenalty = (withdrawAmount * 10) / 100; // 10%
+        assertEq(penaltyAmount, expectedPenalty);
+    }
+    
+    // --- New Detailed Penalty Tests ---
+    
+    function testPenaltyRateUnder30Days() public {
+        uint256 stakeAmount = 1000 * 10**18;
+        uint256 withdrawAmount = 500 * 10**18;
+        approveAndStake(user1, stakeAmount, 2); // 90 days
+        
+        // Advance time to have only 25 days left
+        warpForward(90 days - 25 days);
+        
+        // Check penalty preview (should be 5% since < 30 days left)
+        (,uint256 startTime, uint256 period) = stakingContract.userStake(user1);
+        uint256 penaltyAmount = stakingContract.previewEarlyWithdrawPenalty(
+            startTime + period,
+            withdrawAmount
+        );
+        
+        uint256 expectedPenalty = (withdrawAmount * 5) / 100; // 5%
+        assertEq(penaltyAmount, expectedPenalty);
+        
+        // Check max withdraw amount
+        uint256 maxWithdraw = stakingContract.getUserMaxUrgentWithdraw(user1);
+        uint256 expectedMaxWithdraw = (stakeAmount * 95) / 100; // 95% of stake amount (5% penalty)
+        assertEq(maxWithdraw, expectedMaxWithdraw);
+        
+        // Test actual withdraw
+        uint256 initialBalance = stakingToken.balanceOf(user1);
+        
+        vm.startPrank(user1);
+        stakingContract.urgentWithdraw(withdrawAmount);
+        vm.stopPrank();
+        
+        // Check balance update
+        assertEq(stakingToken.balanceOf(user1), initialBalance + withdrawAmount);
+        
+        // Check stake reduction (should be reduced by withdraw + penalty)
+        (uint256 remainingStake,,) = stakingContract.userStake(user1);
+        assertEq(remainingStake, stakeAmount - withdrawAmount - expectedPenalty);
+        
+        // Check penalty locked amount
+        assertEq(stakingContract.getPenaltyLockedAmount(), expectedPenalty);
+    }
+    
+    function testPenaltyRate30To59Days() public {
+        uint256 stakeAmount = 1000 * 10**18;
+        uint256 withdrawAmount = 500 * 10**18;
+        approveAndStake(user1, stakeAmount, 2); // 90 days
+        
+        // Advance time to have exactly 45 days left
+        warpForward(90 days - 45 days);
+        
+        // Check penalty preview (should be 10% since 30-59 days left)
+        (,uint256 startTime2, uint256 period2) = stakingContract.userStake(user1);
+        uint256 penaltyAmount = stakingContract.previewEarlyWithdrawPenalty(
+            startTime2 + period2,
+            withdrawAmount
+        );
+        
+        uint256 expectedPenalty = (withdrawAmount * 10) / 100; // 10%
+        assertEq(penaltyAmount, expectedPenalty);
+        
+        // Check max withdraw amount
+        uint256 maxWithdraw = stakingContract.getUserMaxUrgentWithdraw(user1);
+        uint256 expectedMaxWithdraw = (stakeAmount * 90) / 100; // 90% of stake amount (10% penalty)
+        assertEq(maxWithdraw, expectedMaxWithdraw);
+    }
+    
+    function testPenaltyRate60To89Days() public {
+        uint256 stakeAmount = 1000 * 10**18;
+        uint256 withdrawAmount = 500 * 10**18;
+        approveAndStake(user1, stakeAmount, 2); // 90 days
+        
+        // Advance time to have exactly 75 days left
+        warpForward(90 days - 75 days);
+        
+        // Check penalty preview (should be 15% since 60-89 days left)
+        (,uint256 startTime3, uint256 period3) = stakingContract.userStake(user1);
+        uint256 penaltyAmount = stakingContract.previewEarlyWithdrawPenalty(
+            startTime3 + period3,
+            withdrawAmount
+        );
+        
+        uint256 expectedPenalty = (withdrawAmount * 15) / 100; // 15%
+        assertEq(penaltyAmount, expectedPenalty);
+        
+        // Check max withdraw amount
+        uint256 maxWithdraw = stakingContract.getUserMaxUrgentWithdraw(user1);
+        uint256 expectedMaxWithdraw = (stakeAmount * 85) / 100; // 85% of stake amount (15% penalty)
+        assertEq(maxWithdraw, expectedMaxWithdraw);
+    }
+    
+    function testPenaltyRateOver90Days() public {
+        uint256 stakeAmount = 1000 * 10**18;
+        uint256 withdrawAmount = 500 * 10**18;
+        
+        // Create a custom staking period for this test
+        uint256[] memory longPeriods = new uint256[](1);
+        longPeriods[0] = 200 days;
+        
+        // Deploy a new contract with longer staking period
+        TokenStaking longStakingContract = new TokenStaking(address(stakingToken), longPeriods);
+        
+        // Approve and stake
+        vm.startPrank(user1);
+        stakingToken.approve(address(longStakingContract), stakeAmount);
+        longStakingContract.stake(stakeAmount, 0); // 200 days
+        vm.stopPrank();
+        
+        // Advance time to have exactly 100 days left (still over 90)
+        warpForward(100 days);
+        
+        // Check penalty preview (should be 20% since >= 90 days left)
+        (,uint256 stakeStartTime, uint256 stakePeriod) = longStakingContract.userStake(user1);
+        uint256 penaltyAmount = longStakingContract.previewEarlyWithdrawPenalty(
+            stakeStartTime + stakePeriod,
+            withdrawAmount
+        );
+        
+        uint256 expectedPenalty = (withdrawAmount * 20) / 100; // 20%
+        assertEq(penaltyAmount, expectedPenalty);
+        
+        // Check max withdraw amount
+        uint256 maxWithdraw = longStakingContract.getUserMaxUrgentWithdraw(user1);
+        uint256 expectedMaxWithdraw = (stakeAmount * 80) / 100; // 80% of stake amount (20% penalty)
+        assertEq(maxWithdraw, expectedMaxWithdraw);
+    }
+    
+    function testUrgentWithdrawWithComplexAmounts() public {
+        // Test with a non-round number to check for rounding issues
+        uint256 stakeAmount = 1777 * 10**18;
+        uint256 withdrawAmount = 423 * 10**18;
+        approveAndStake(user1, stakeAmount, 1); // 30 days
+        
+        // Calculate expected penalty (10% for 30 days period)
+        uint256 expectedPenalty = (withdrawAmount * 10) / 100;
+        
+        // Initial state check
+        uint256 initialBalance = stakingToken.balanceOf(user1);
+        uint256 initialPenaltyLocked = stakingContract.getPenaltyLockedAmount();
+        
+        // Perform urgent withdraw
+        vm.startPrank(user1);
+        stakingContract.urgentWithdraw(withdrawAmount);
+        vm.stopPrank();
+        
+        // Verify balances
+        assertEq(stakingToken.balanceOf(user1), initialBalance + withdrawAmount);
+        
+        // Verify remaining stake (should be reduced by withdraw amount + penalty)
+        (uint256 remainingStake,,) = stakingContract.userStake(user1);
+        assertEq(remainingStake, stakeAmount - withdrawAmount - expectedPenalty);
+        
+        // Verify penalty locked amount is increased correctly
+        assertEq(stakingContract.getPenaltyLockedAmount(), initialPenaltyLocked + expectedPenalty);
+    }
+    
+    function testPenaltyAccumulation() public {
+        // Let's have two users make urgent withdrawals and check the accumulated penalties
+        uint256 user1StakeAmount = 1000 * 10**18;
+        uint256 user2StakeAmount = 2000 * 10**18;
+        
+        uint256 user1WithdrawAmount = 400 * 10**18;
+        uint256 user2WithdrawAmount = 800 * 10**18;
+        
+        // User 1 stakes for 30 days
+        approveAndStake(user1, user1StakeAmount, 1);
+        
+        // User 2 stakes for 90 days
+        approveAndStake(user2, user2StakeAmount, 2);
+        
+        // Forward time to have 25 days left for user 1 (5% penalty)
+        // and 85 days left for user 2 (15% penalty)
+        warpForward(5 days);
+        
+        // User 1 makes an urgent withdraw
+        vm.startPrank(user1);
+        stakingContract.urgentWithdraw(user1WithdrawAmount);
+        vm.stopPrank();
+        
+        // User 2 makes an urgent withdraw
+        vm.startPrank(user2);
+        stakingContract.urgentWithdraw(user2WithdrawAmount);
+        vm.stopPrank();
+        
+        // Calculate expected penalties
+        uint256 user1Penalty = (user1WithdrawAmount * 5) / 100;
+        uint256 user2Penalty = (user2WithdrawAmount * 15) / 100;
+        uint256 totalExpectedPenalty = user1Penalty + user2Penalty;
+        
+        // Check accumulated penalty
+        assertEq(stakingContract.getPenaltyLockedAmount(), totalExpectedPenalty);
+        
+        // Now test owner withdrawing the penalties
+        uint256 ownerInitialBalance = stakingToken.balanceOf(address(this));
+        
+        vm.startPrank(address(this));
+        stakingContract.withdrawPenaltyLockedAmount();
+        vm.stopPrank();
+        
+        // Check owner received the penalty tokens
+        assertEq(stakingToken.balanceOf(address(this)), ownerInitialBalance + totalExpectedPenalty);
+        
+        // Check penalty locked amount is reset to zero
+        assertEq(stakingContract.getPenaltyLockedAmount(), 0);
     }
     
     function testGetUserMaxUrgentWithdraw() public {
         uint256 stakeAmount = 1000 * 10**18;
         approveAndStake(user1, stakeAmount, 1); // 30 days
         
+        // For 30 days staking period, the penalty should be 10%
+        uint256 expectedMaxWithdraw = (stakeAmount * 90) / 100; // 90% of stake
+        
         uint256 maxWithdraw = stakingContract.getUserMaxUrgentWithdraw(user1);
-        assertEq(maxWithdraw, stakeAmount);
+        assertEq(maxWithdraw, expectedMaxWithdraw);
     }
     
     function testWithdrawPenaltyLockedAmount() public {
         uint256 stakeAmount = 1000 * 10**18;
         approveAndStake(user1, stakeAmount, 1); // 30 days
         
-        // Since penalty is 0 in implementation, let's first check that
+        // Perform urgent withdraw to accumulate penalty
+        uint256 withdrawAmount = 500 * 10**18;
+        
+        vm.startPrank(user1);
+        stakingContract.urgentWithdraw(withdrawAmount);
+        vm.stopPrank();
+        
+        // Calculate expected penalty (10% for 30 days)
+        uint256 expectedPenalty = (withdrawAmount * 10) / 100;
+        
+        // Verify penalty accumulation
+        assertEq(stakingContract.getPenaltyLockedAmount(), expectedPenalty);
+        
+        // Test owner withdrawing the penalty
+        uint256 ownerInitialBalance = stakingToken.balanceOf(address(this));
+        
+        vm.startPrank(address(this));
+        stakingContract.withdrawPenaltyLockedAmount();
+        vm.stopPrank();
+        
+        // Verify owner received funds and contract penalty is reset
+        assertEq(stakingToken.balanceOf(address(this)), ownerInitialBalance + expectedPenalty);
         assertEq(stakingContract.getPenaltyLockedAmount(), 0);
         
-        // Try to withdraw penalty without any locked amount
+        // Try to withdraw again when penalty is 0
         vm.startPrank(address(this));
         vm.expectRevert("No penalty locked amount");
         stakingContract.withdrawPenaltyLockedAmount();
@@ -439,9 +669,12 @@ contract TokenStakingTest is Test {
         uint256 withdrawAmount = 500 * 10**18;
         approveAndStake(user1, stakeAmount, 1); // 30 days
         
+        // Calculate expected penalty (10% for 30 days)
+        uint256 expectedPenalty = (withdrawAmount * 10) / 100;
+        
         vm.startPrank(user1);
         vm.expectEmit(true, true, true, true);
-        emit UrgentWithdrawn(user1, withdrawAmount, 0, block.timestamp);
+        emit UrgentWithdrawn(user1, withdrawAmount, expectedPenalty, block.timestamp);
         stakingContract.urgentWithdraw(withdrawAmount);
         vm.stopPrank();
     }

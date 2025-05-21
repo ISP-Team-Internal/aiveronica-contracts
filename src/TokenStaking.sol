@@ -26,6 +26,7 @@ contract TokenStaking is ITokenStaking, ReentrancyGuard, Pausable, Ownable {
     }
 
     mapping(address => Stake) public override userStake;
+
     constructor(
         address _stakingToken,
         uint256[] memory _stakingPeriods
@@ -56,7 +57,12 @@ contract TokenStaking is ITokenStaking, ReentrancyGuard, Pausable, Ownable {
         _unpause();
     }
 
-    function getStakingPeriods() external view override returns (uint256[] memory) {
+    function getStakingPeriods()
+        external
+        view
+        override
+        returns (uint256[] memory)
+    {
         return stakingPeriods;
     }
 
@@ -64,16 +70,43 @@ contract TokenStaking is ITokenStaking, ReentrancyGuard, Pausable, Ownable {
         return penaltyLockedAmount;
     }
 
-    function previewEarlyWithdrawPenalty(uint256 stakedAmount, uint256 unlocksAt, uint256 period, uint256 amountToWithdraw ) external pure override returns (uint256 penaltyAmount) {
-        penaltyAmount = calculatePenalty(stakedAmount, unlocksAt, period, amountToWithdraw);
+    function previewEarlyWithdrawPenalty(
+        uint256 unlocksAt,
+        uint256 amountToWithdraw
+    ) external view override returns (uint256 penaltyAmount) {
+        penaltyAmount = calculatePenalty(unlocksAt, amountToWithdraw);
         return penaltyAmount;
     }
 
     // * Get the max amount of tokens user can urgent withdraw
-    // ! the result should exclude the penalty amount
-    // TODO: implement this
-    function getUserMaxUrgentWithdraw(address user) external view override returns (uint256) {
-        return userStake[user].amount;
+    function getUserMaxUrgentWithdraw(
+        address user
+    ) external view override returns (uint256) {
+        // Calculate days left until unlock (1 day = 86400 seconds)
+        uint256 unlocksAt = userStake[user].startTime + userStake[user].period;
+        uint256 timeLeft = 0;
+        if (unlocksAt > block.timestamp) {
+            timeLeft = unlocksAt - block.timestamp;
+        }
+        uint256 daysLeft = timeLeft / 86400;
+
+        // Determine penalty rate based on days left
+        uint256 penaltyRate;
+        if (daysLeft < 30) {
+            penaltyRate = 5; // 5%
+        } else if (daysLeft < 60) {
+            penaltyRate = 10; // 10%
+        } else if (daysLeft < 90) {
+            penaltyRate = 15; // 15%
+        } else if (daysLeft < 180) {
+            penaltyRate = 20; // 20%
+        } else {
+            penaltyRate = 20; // Default to 20% for longer periods
+        }
+
+        // Calculate penalty amount (penaltyRate% of amountToWithdraw)
+        uint256 maxWithdrawRate = 100 - penaltyRate;
+        return (userStake[user].amount * maxWithdrawRate) / 100;
     }
 
     function isStakeExpired(Stake memory _stake) internal view returns (bool) {
@@ -92,7 +125,7 @@ contract TokenStaking is ITokenStaking, ReentrancyGuard, Pausable, Ownable {
      * @param _periodIndex Index of the staking period
      */
     function stake(
-        uint256 _amount,        
+        uint256 _amount,
         uint256 _periodIndex
     ) external override whenNotPaused nonReentrant {
         require(
@@ -116,14 +149,26 @@ contract TokenStaking is ITokenStaking, ReentrancyGuard, Pausable, Ownable {
         // simply create a new stake
         if (!isUserStakedBefore(msg.sender)) {
             userStake[msg.sender] = newStake;
-            emit Staked(msg.sender, _amount, chosenPeriod, block.timestamp, block.timestamp + chosenPeriod);
+            emit Staked(
+                msg.sender,
+                _amount,
+                chosenPeriod,
+                block.timestamp,
+                block.timestamp + chosenPeriod
+            );
             return;
         }
         // * User has staked before
         if (isStakeExpired(oldStake)) {
             // * check if the previous stake is withdrawn
             require(oldStake.amount == 0, "Previous stake is not withdrawn");
-            emit Staked(msg.sender, _amount, chosenPeriod, block.timestamp, block.timestamp + chosenPeriod);
+            emit Staked(
+                msg.sender,
+                _amount,
+                chosenPeriod,
+                block.timestamp,
+                block.timestamp + chosenPeriod
+            );
         } else {
             // * User has staked before and the stake is not expired
             require(
@@ -132,7 +177,13 @@ contract TokenStaking is ITokenStaking, ReentrancyGuard, Pausable, Ownable {
             );
             newStake.amount += oldStake.amount;
             emit Withdrawn(msg.sender, oldStake.amount, block.timestamp);
-            emit Staked(msg.sender, newStake.amount, chosenPeriod, block.timestamp, block.timestamp + chosenPeriod);
+            emit Staked(
+                msg.sender,
+                newStake.amount,
+                chosenPeriod,
+                block.timestamp,
+                block.timestamp + chosenPeriod
+            );
         }
         userStake[msg.sender] = newStake;
     }
@@ -177,43 +228,98 @@ contract TokenStaking is ITokenStaking, ReentrancyGuard, Pausable, Ownable {
         _stake.startTime = block.timestamp;
         _stake.period = newPeriod;
         preventUrgentWithdraw[msg.sender] = false;
-        emit Staked(msg.sender, _stake.amount, newPeriod, block.timestamp, block.timestamp + newPeriod);
+        emit Staked(
+            msg.sender,
+            _stake.amount,
+            newPeriod,
+            block.timestamp,
+            block.timestamp + newPeriod
+        );
     }
 
-    // TODO: calculate penalty based on parameters
     /**
      * @notice Calculate penalty amount based on parameters
-     * @param stakedAmount Amount of tokens staked
      * @param unlocksAt Timestamp when the stake unlocks
-     * @param period Staking period
      * @param amountToWithdraw Amount of tokens to withdraw
      * @return penaltyAmount Amount of penalty
      */
-    function calculatePenalty(uint256 stakedAmount, uint256 unlocksAt, uint256 period, uint256 amountToWithdraw ) internal pure returns (uint256 penaltyAmount) {
-        return 0;
+    function calculatePenalty(
+        uint256 unlocksAt,
+        uint256 amountToWithdraw
+    ) internal view returns (uint256 penaltyAmount) {
+        // Calculate days left until unlock (1 day = 86400 seconds)
+        uint256 timeLeft = 0;
+        if (unlocksAt > block.timestamp) {
+            timeLeft = unlocksAt - block.timestamp;
+        }
+        uint256 daysLeft = timeLeft / 86400;
+
+        // Determine penalty rate based on days left
+        uint256 penaltyRate;
+        if (daysLeft < 30) {
+            penaltyRate = 5; // 5%
+        } else if (daysLeft < 60) {
+            penaltyRate = 10; // 10%
+        } else if (daysLeft < 90) {
+            penaltyRate = 15; // 15%
+        } else if (daysLeft < 180) {
+            penaltyRate = 20; // 20%
+        } else {
+            penaltyRate = 20; // Default to 20% for longer periods
+        }
+
+        // Calculate penalty amount (penaltyRate% of amountToWithdraw)
+        penaltyAmount = (amountToWithdraw * penaltyRate) / 100;
+
+        return penaltyAmount;
     }
 
     /**
      * @notice Urgent withdraw for user to withdraw their stake earlier than the staking period with penalty
      * @param _amountActuallyWithdrawn Amount of tokens user actually get
      */
-    function urgentWithdraw(uint256 _amountActuallyWithdrawn) external override nonReentrant {
+    function urgentWithdraw(
+        uint256 _amountActuallyWithdrawn
+    ) external override nonReentrant {
         require(isUserStakedBefore(msg.sender), "User has not staked before");
-        require(!preventUrgentWithdraw[msg.sender], "User has already urgent withdrawn");
+        require(
+            !preventUrgentWithdraw[msg.sender],
+            "User has already urgent withdrawn"
+        );
         Stake storage _stake = userStake[msg.sender];
-        require(!isStakeExpired(_stake), "Stake is expired, use withdraw() instead");
+        require(
+            !isStakeExpired(_stake),
+            "Stake is expired, use withdraw() instead"
+        );
 
-        uint256 penaltyAmount = calculatePenalty(_stake.amount, _stake.startTime + _stake.period, _stake.period, _amountActuallyWithdrawn);
-        require(_amountActuallyWithdrawn + penaltyAmount <= _stake.amount, "Amount to withdraw with penalty is greater than the stake");
+        uint256 penaltyAmount = calculatePenalty(
+            _stake.startTime + _stake.period,
+            _amountActuallyWithdrawn
+        );
+        require(
+            _amountActuallyWithdrawn + penaltyAmount <= _stake.amount,
+            "Amount to withdraw with penalty is greater than the stake"
+        );
 
         stakingToken.safeTransfer(msg.sender, _amountActuallyWithdrawn);
-        userStake[msg.sender].amount -= (_amountActuallyWithdrawn + penaltyAmount);
+        userStake[msg.sender].amount -= (_amountActuallyWithdrawn +
+            penaltyAmount);
         penaltyLockedAmount += penaltyAmount;
         preventUrgentWithdraw[msg.sender] = true;
-        emit UrgentWithdrawn(msg.sender, _amountActuallyWithdrawn, penaltyAmount, block.timestamp);
+        emit UrgentWithdrawn(
+            msg.sender,
+            _amountActuallyWithdrawn,
+            penaltyAmount,
+            block.timestamp
+        );
     }
 
-    function withdrawPenaltyLockedAmount() external override nonReentrant onlyOwner {
+    function withdrawPenaltyLockedAmount()
+        external
+        override
+        nonReentrant
+        onlyOwner
+    {
         require(penaltyLockedAmount > 0, "No penalty locked amount");
         stakingToken.safeTransfer(msg.sender, penaltyLockedAmount);
         penaltyLockedAmount = 0;
