@@ -10,7 +10,7 @@ contract TestToken is ERC20, Ownable {
     }
 
     // Function to mint additional tokens (for testing purposes)
-    function mint(address to, uint256 amount) public onlyOwner {
+    function mint(address to, uint256 amount) public  {
         _mint(to, amount);
     }
 }

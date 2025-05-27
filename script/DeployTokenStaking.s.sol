@@ -11,9 +11,9 @@ contract DeployTokenStaking is Script {
 
         // Deploy mock VADER token
         TestToken testToken;
-        address tokenAddress = vm.envAddress("PIXEL_TOKEN_ADDRESS");
+        address tokenAddress = vm.envAddress("BASE_TOKEN_ADDRESS");
         if (tokenAddress == address(0)) {
-            testToken = new TestToken(msg.sender, "PIXEL", "PIX");
+            testToken = new TestToken(msg.sender, "Sample Token", "SPT");
             console.log("Test token deployed at:", address(testToken));
         } else {
             testToken = TestToken(tokenAddress);
