@@ -14,7 +14,7 @@ contract InitStakedToken is Script {
         require(stakedTokenAddress != address(0), "STAKED_TOKEN_ADDRESS not set");
 
         // Get initialization parameters from environment variables or use defaults
-        address baseToken = vm.envOr("BASE_TOKEN_ADDRESS", address(0x5AFE2041B2bf3BeAf7fa4E495Ff2E9C7bd204a34));
+        address baseToken = vm.envOr("BASE_TOKEN_ADDRESS", address(0x0d91EbB16291873A0c67158f578ec249F4321b49));
         uint8 maxWeeks = uint8(vm.envOr("MAX_WEEKS", uint256(2)));
         string memory tokenName = vm.envOr("TOKEN_NAME", string("Staked Token"));
         string memory tokenSymbol = vm.envOr("TOKEN_SYMBOL", string("sToken"));

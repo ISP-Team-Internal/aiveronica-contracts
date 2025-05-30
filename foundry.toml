@@ -9,6 +9,8 @@ solc_version = "0.8.20" # Match the Solidity version in your contract
 optimizer = true
 optimizer_runs = 200
 extra_output = ['abi']
+# Allow reading CSV files for airdrop scripts
+fs_permissions = [{ access = "read", path = "./" }]
 
 [profile.default.fuzz]
 runs = 256
